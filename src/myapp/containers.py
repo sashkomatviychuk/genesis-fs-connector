@@ -12,10 +12,20 @@ from collections.abc import AsyncIterator
 from dependency_injector import containers, providers
 from genesis import Inbound
 
+from myapp.application.action_handlers.answer_handler import AnswerActionHandler
 from myapp.application.action_handlers.base import ActionHandler
 from myapp.application.action_handlers.bridge_handler import BridgeActionHandler
 from myapp.application.action_handlers.hangup_handler import HangupActionHandler
 from myapp.application.action_handlers.playback_handler import PlaybackActionHandler
+from myapp.application.event_handlers.application_complete.answer_complete_handler import (
+    AnswerCompleteHandler,
+)
+from myapp.application.event_handlers.application_complete.base import (
+    ApplicationCompleteHandler,
+)
+from myapp.application.event_handlers.application_complete.playback_complete_handler import (
+    PlaybackCompleteHandler,
+)
 from myapp.application.event_handlers.base import EventHandler
 from myapp.application.event_handlers.channel_create_handler import ChannelCreateHandler
 from myapp.application.event_handlers.channel_execute_complete_handler import (
@@ -66,16 +76,40 @@ class Container(containers.DeclarativeContainer):
     )
 
     # ---- action handlers registry ---------------------------------------
+    answer_action_handler = providers.Singleton(AnswerActionHandler)
     playback_action_handler = providers.Singleton(PlaybackActionHandler)
     bridge_action_handler = providers.Singleton(BridgeActionHandler)
     hangup_action_handler = providers.Singleton(HangupActionHandler)
 
     action_handlers: providers.Dict[ActionType, ActionHandler] = providers.Dict(
         {
+            ActionType.ANSWER: answer_action_handler,
             ActionType.PLAYBACK: playback_action_handler,
             ActionType.BRIDGE: bridge_action_handler,
             ActionType.HANGUP: hangup_action_handler,
         }
+    )
+
+    # ---- CHANNEL_EXECUTE_COMPLETE: per-application handlers registry -----
+    answer_complete_handler = providers.Singleton(
+        AnswerCompleteHandler,
+        repository=execution_repository,
+        publisher=result_publisher,
+    )
+
+    playback_complete_handler = providers.Singleton(
+        PlaybackCompleteHandler,
+        repository=execution_repository,
+        publisher=result_publisher,
+    )
+
+    application_complete_handlers: providers.Dict[str, ApplicationCompleteHandler] = (
+        providers.Dict(
+            {
+                "answer": answer_complete_handler,
+                "playback": playback_complete_handler,
+            }
+        )
     )
 
     # ---- event handlers registry ------------------------------------------
@@ -84,7 +118,7 @@ class Container(containers.DeclarativeContainer):
     channel_execute_complete_handler = providers.Singleton(
         ChannelExecuteCompleteHandler,
         repository=execution_repository,
-        publisher=result_publisher,
+        application_handlers=application_complete_handlers,
     )
 
     channel_hangup_complete_handler = providers.Singleton(

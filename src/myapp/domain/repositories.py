@@ -26,3 +26,12 @@ class CommandExecutionRepository(ABC):
     @abstractmethod
     def save(self, execution: CommandExecution) -> None:
         """Створює або оновлює запис виконання (upsert)."""
+
+    @abstractmethod
+    def delete(self, job_uuid: str) -> None:
+        """Видаляє запис виконання. Викликається application-специфічним
+        ApplicationCompleteHandler'ом (answer/playback/...) одразу після
+        публікації результату — CommandExecution більше не потрібен, бо
+        його роль (кореляція команда↔подія) вичерпана в момент отримання
+        CHANNEL_EXECUTE_COMPLETE. Реалізація має бути noop, якщо запису
+        вже немає (напр. видалений повторно при дублікаті події)."""

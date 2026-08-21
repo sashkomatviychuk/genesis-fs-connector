@@ -1,45 +1,56 @@
-"""Обробник CHANNEL_EXECUTE_COMPLETE.
+"""Обробник CHANNEL_EXECUTE_COMPLETE — верхньорівневий диспетчер.
 
-Подія завжди корелює з конкретним CommandExecution через job_uuid.
-Тут відбувається міні-валідація (app_response) і публікація success/failed
-результату.
+Знаходить CommandExecution по job_uuid і делегує подальшу обробку
+конкретному ApplicationCompleteHandler'у за event.application
+(answer/playback/...) — кожен application має власну логіку валідації,
+побудови payload і критеріїв success/failure.
+
+Якщо execution не знайдено (job_uuid невідомий — подія вже оброблена
+раніше, дублікат, чи прийшла з чужого джерела) — це не помилка процесу,
+а нормальна ситуація: подія просто ігнорується (skip), без винятку.
 """
+
 from __future__ import annotations
 
-from myapp.application.ports import ResultPublisherPort
+import logging
+
+from myapp.application.event_handlers.application_complete.base import (
+    ApplicationCompleteHandler,
+)
 from myapp.domain.entities import CommandExecution
 from myapp.domain.events.channel_execute_complete import ChannelExecuteCompleteEvent
-from myapp.domain.exceptions import UnknownExecutionError
 from myapp.domain.repositories import CommandExecutionRepository
 
-_SUCCESS_RESPONSES: frozenset[str] = frozenset({"FILE PLAYED", "SUCCESS", "OK"})
+logger = logging.getLogger(__name__)
 
 
 class ChannelExecuteCompleteHandler:
     def __init__(
         self,
         repository: CommandExecutionRepository,
-        publisher: ResultPublisherPort,
+        application_handlers: dict[str, ApplicationCompleteHandler],
     ) -> None:
         self._repository: CommandExecutionRepository = repository
-        self._publisher: ResultPublisherPort = publisher
+        self._application_handlers: dict[str, ApplicationCompleteHandler] = application_handlers
 
     async def handle(self, event: ChannelExecuteCompleteEvent) -> None:
         execution: CommandExecution | None = self._repository.get_by_id(event.job_uuid)
         if execution is None:
-            raise UnknownExecutionError(event.job_uuid)
+            logger.info(
+                "No pending execution for job_uuid=%s (already processed or "
+                "unknown source) — skipping",
+                event.job_uuid,
+            )
+            return
 
-        self._apply_validation(execution, event)
+        handler = self._application_handlers.get(event.application)
+        if handler is None:
+            logger.warning(
+                "No ApplicationCompleteHandler registered for application=%r "
+                "(job_uuid=%s) — skipping",
+                event.application,
+                event.job_uuid,
+            )
+            return
 
-        self._repository.save(execution)
-        await self._publisher.publish_result(execution)
-
-    @staticmethod
-    def _apply_validation(
-        execution: CommandExecution, event: ChannelExecuteCompleteEvent
-    ) -> None:
-        response: str = event.app_response.strip().upper()
-        if response in _SUCCESS_RESPONSES:
-            execution.mark_succeeded()
-        else:
-            execution.mark_failed(reason=event.app_response or "Unknown failure")
+        await handler.handle(event, execution)

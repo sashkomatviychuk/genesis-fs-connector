@@ -7,6 +7,7 @@ from enum import Enum
 
 
 class ActionType(str, Enum):
+    ANSWER = "ANSWER"
     PLAYBACK = "PLAYBACK"
     BRIDGE = "BRIDGE"
     HANGUP = "HANGUP"

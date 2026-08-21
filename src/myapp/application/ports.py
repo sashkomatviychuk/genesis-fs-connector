@@ -11,6 +11,7 @@ from typing import Protocol
 
 from myapp.domain.commands import Command
 from myapp.domain.entities import CommandExecution
+from myapp.domain.value_objects import ResultPayload
 
 
 class FreeSwitchGatewayPort(Protocol):
@@ -21,6 +22,13 @@ class FreeSwitchGatewayPort(Protocol):
 
 
 class ResultPublisherPort(Protocol):
-    async def publish_result(self, execution: CommandExecution) -> None:
-        """Публікує success/failed результат виконання команди у вихідну чергу."""
+    async def publish_result(
+        self, execution: CommandExecution, payload: ResultPayload | None = None
+    ) -> None:
+        """Публікує success/failed результат виконання команди у вихідну чергу.
+
+        payload — типізований application-специфічний Value Object
+        (AnswerResultPayload, PlaybackResultPayload, ...), зібраний
+        конкретним ApplicationCompleteHandler'ом; None — для подій, де
+        немає додаткових полів понад базовий execution."""
         ...

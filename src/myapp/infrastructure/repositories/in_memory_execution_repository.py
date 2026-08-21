@@ -27,3 +27,6 @@ class InMemoryCommandExecutionRepository(CommandExecutionRepository):
 
     def save(self, execution: CommandExecution) -> None:
         self._storage[execution.id] = execution
+
+    def delete(self, job_uuid: str) -> None:
+        self._storage.pop(job_uuid, None)

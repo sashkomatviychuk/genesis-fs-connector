@@ -209,3 +209,60 @@ APP_ENV=prod python -m myapp.main
 
 `ExecuteActionUseCase` і `HandleChannelEventUseCase` залишаються незмінними
 в обох випадках.
+
+## Per-application handler для CHANNEL_EXECUTE_COMPLETE (answer/playback/...)
+
+`ChannelExecuteCompleteHandler` — верхньорівневий диспетчер: знаходить
+`CommandExecution` по `job_uuid` і делегує обробку конкретному
+`ApplicationCompleteHandler`у за `event.application` (`answer`, `playback`,
+...). Кожен application-handler сам валідує `app_response`, будує власний
+payload, публікує результат і **видаляє** execution з репозиторію —
+його роль (кореляція команда↔подія) вичерпана одразу після обробки.
+
+```
+domain/repositories.py            + delete(job_uuid) — новий метод порту
+application/event_handlers/
+├── channel_execute_complete_handler.py     # диспетчер за event.application, skip якщо execution None
+└── application_complete/
+    ├── base.py                              # ApplicationCompleteHandler(Protocol)
+    ├── answer_complete_handler.py           # свій payload + критерії success для answer
+    └── playback_complete_handler.py         # свій payload (file_path) + критерії success для playback
+```
+
+Якщо `job_uuid` невідомий (execution не знайдено — подія вже оброблена,
+дублікат, чи з чужого джерела) — це **не помилка**, а нормальна ситуація:
+подія просто ігнорується (`skip` + лог), без винятку.
+
+Новий FreeSwitch application = новий файл у `application_complete/` +
+рядок у `Container.application_complete_handlers` Dict. Диспетчер
+(`ChannelExecuteCompleteHandler`) не змінюється.
+
+### Типізований payload замість `dict[str, Any]`
+
+`ResultPublisherPort.publish_result()` приймає **типізований**
+`ResultPayload` (не `dict[str, Any]`) — кожен application-handler повертає
+власний dataclass:
+
+```python
+class ResultPayload(ABC):
+    application: str
+
+@dataclass(frozen=True)
+class AnswerResultPayload(ResultPayload):
+    application: str = "answer"
+    channel_id: str = ""
+
+@dataclass(frozen=True)
+class PlaybackResultPayload(ResultPayload):
+    application: str = "playback"
+    channel_id: str = ""
+    file_path: str = ""
+```
+
+Той самий патерн, що й `Action`/`ChannelEvent`: базовий ABC-клас +
+конкретні `@dataclass(frozen=True)` підкласи на кожен тип. Це дає
+статичну перевірку полів на етапі написання handler'а (типізатор
+підкаже, якщо `PlaybackCompleteHandler` спробує звернутись до
+неіснуючого поля), на відміну від довільного `dict`, де помилку в назві
+ключа видно лише в рантаймі. `StubResultPublisher` серіалізує payload
+через `dataclasses.asdict()`.
