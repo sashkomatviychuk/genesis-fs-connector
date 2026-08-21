@@ -3,6 +3,7 @@
 Диспетчеризує через словник action_handlers (registry, зібраний у DI
 контейнері). Async — бо send_command() іде через greenswitch (asyncio I/O).
 """
+
 from __future__ import annotations
 
 from myapp.application.action_handlers.base import ActionHandler

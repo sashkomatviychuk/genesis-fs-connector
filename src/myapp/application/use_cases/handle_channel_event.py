@@ -3,6 +3,7 @@
 Тонкий async-диспетчер: знаходить handler по event.type у словнику
 event_handlers і делегує йому всю роботу.
 """
+
 from __future__ import annotations
 
 from myapp.application.event_handlers.base import EventHandler
@@ -16,5 +17,5 @@ class HandleChannelEventUseCase:
     async def execute(self, event: ChannelEvent) -> None:
         handler: EventHandler | None = self._event_handlers.get(event.type)
         if handler is None:
-            return  # подія не цікавить систему — ігноруємо мовчки
+            return
         await handler.handle(event)

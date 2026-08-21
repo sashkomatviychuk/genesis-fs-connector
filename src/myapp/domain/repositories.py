@@ -5,6 +5,7 @@
 змінити на async — use case'и вже async і легко адаптуються (просто
 додати await у виклики репозиторію).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

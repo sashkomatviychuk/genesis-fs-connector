@@ -1,4 +1,5 @@
 """Фабрика для перетворення сирого payload (dict) у конкретний доменний Action."""
+
 from __future__ import annotations
 
 from typing import Any

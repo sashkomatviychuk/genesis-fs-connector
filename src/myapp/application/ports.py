@@ -4,6 +4,7 @@
 (asyncio-native клієнт ESL), ResultPublisherPort — через асинхронний клієнт
 черги (aio-pika/aiokafka тощо).
 """
+
 from __future__ import annotations
 
 from typing import Protocol

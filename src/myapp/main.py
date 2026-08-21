@@ -4,6 +4,7 @@
 Піднімає DI-контейнер (dependency-injector), ініціалізує async-ресурси
 (EslGateway.connect() через providers.Resource) і запускає ESL event listener.
 """
+
 from __future__ import annotations
 
 import asyncio

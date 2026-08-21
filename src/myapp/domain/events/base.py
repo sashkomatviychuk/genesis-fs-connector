@@ -5,6 +5,7 @@
 - ChannelLifecycleEvent: подія життєвого циклу каналу, не прив'язана
   до конкретної команди.
 """
+
 from __future__ import annotations
 
 from abc import ABC
