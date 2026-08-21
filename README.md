@@ -1,4 +1,4 @@
-# ESL Controller — Async Hexagonal Architecture (greenswitch + dependency-injector)
+# ESL Controller — Async Hexagonal Architecture (genesis + dependency-injector)
 
 Async-версія міні-застосунку для керування FreeSwitch через **ESL Inbound**.
 Приймає Action-и (PLAYBACK, BRIDGE, HANGUP), формує та надсилає команди,
@@ -8,9 +8,9 @@ success/failed результат у вихідну чергу.
 
 Зміни відносно попередньої (sync) версії:
 
-1. **greenswitch** замість python-ESL — asyncio-native клієнт ESL,
-   встановлюється звичайним `pip install` (на відміну від python-ESL,
-   що збирається з FreeSwitch source).
+1. **genesis** замість python-ESL — asyncio-native клієнт ESL (на відміну
+   від greenswitch, що побудований на Gevent, а не asyncio), встановлюється
+   звичайним `pip install genesis`.
 2. **Конфігурація з `config/config-{APP_ENV}.yaml`** — через
    `dependency-injector`'s `container.config.from_yaml(...)`.
 3. **Повна типізація** — усі функції, методи, атрибути й змінні мають
@@ -62,9 +62,9 @@ src/myapp/
 │
 ├── infrastructure/
 │   ├── esl/
-│   │   ├── esl_gateway.py           # адаптер над greenswitch.InboundESL
-│   │   ├── esl_event_mapper.py      # raw greenswitch event -> domain ChannelEvent
-│   │   └── esl_event_listener.py    # driving adapter, async
+│   │   ├── esl_gateway.py           # адаптер над genesis.Inbound (команди)
+│   │   ├── esl_event_mapper.py      # raw genesis event -> domain ChannelEvent
+│   │   └── esl_event_listener.py    # driving adapter над genesis.Consumer (події)
 │   ├── queue/
 │   │   └── result_publisher.py      # StubResultPublisher (async; заміна на реальний брокер)
 │   └── repositories/
@@ -91,7 +91,17 @@ src/myapp/
 | `ExecuteActionUseCase.execute()` | **async** | Викликає async gateway |
 | `HandleChannelEventUseCase.execute()` | **async** | Викликає async event handler |
 
-## greenswitch: ключові деталі реалізації
+## genesis: ключові деталі реалізації
+
+### Два окремі ESL-з'єднання: `Inbound` для команд, `Consumer` для подій
+
+`EslGateway` використовує `genesis.Inbound` (async context manager) —
+тримається відкритим на весь час роботи застосунку через DI Resource-
+провайдер. `EslEventListener` використовує окремий `genesis.Consumer`,
+який керує власним з'єднанням і підпискою на події декларативно, через
+`@app.handle("EVENT_NAME")`. Це два незалежні inbound-з'єднання до
+FreeSwitch — типовий патерн для genesis: одне для надсилання команд,
+інше — для довготривалого прийому подій.
 
 ### Кореляція команда↔подія через клієнтський `Event-UUID`
 
@@ -102,21 +112,24 @@ src/myapp/
 `CHANNEL_EXECUTE_COMPLETE` події — кореляція гарантована незалежно від
 деталей конкретної версії обгортки над сирим протоколом.
 
-### Обробники подій — корутини, awaited самим greenswitch
+### Обробники подій — корутини, реєстровані через `@app.handle(...)`
 
 ```python
-connection.register_handle("CHANNEL_EXECUTE_COMPLETE", self._on_raw_event)
+self._app.handle(event_name)(self._on_raw_event)
 ```
 
-`_on_raw_event` — `async def`; greenswitch очікує на неї всередині свого
-internal event loop (`handle_events()`), тому немає потреби вручну
-створювати `asyncio.Task` для кожної події.
+`_on_raw_event` — `async def`; genesis документація прямо вимагає, щоб
+кожен обробник події був awaitable, і сам await-ить його всередині
+`app.start()`. Той самий callback реєструється для кожної цікавої нам
+події — конкретна доменна диспетчеризація відбувається вже в
+`HandleChannelEventUseCase` за `event.type`.
 
-### `esl_event_mapper.py` захищений від відмінностей у версіях API
+### `esl_event_mapper.py` захищений від відмінностей у формі події
 
-Функція `_header()` пробує спершу `raw_event.get_header(name)`, потім
-`raw_event.headers.get(name)` — це страхує код від відмінностей точного
-API об'єкта події між версіями greenswitch.
+genesis документація показує події/відповіді як dict-подібні об'єкти
+(`{'Content-Type': ..., 'Reply-Text': ...}`), тому `_header()` спершу
+пробує `raw_event.get(name)`, а якщо конкретна версія бібліотеки віддає
+об'єкт з окремим атрибутом `.headers` — підстраховується і цим шляхом.
 
 ## Конфігурація: `config/config-{APP_ENV}.yaml`
 
@@ -151,22 +164,23 @@ APP_ENV=prod python -m myapp.main   # завантажить config/config-prod.
 
 ```python
 async def _init_esl_gateway(host: str, port: int, password: str) -> AsyncIterator[EslGateway]:
-    gateway = EslGateway(host=host, port=port, password=password)
-    await gateway.connect()
-    yield gateway
+    async with Inbound(host, port, password) as client:
+        yield EslGateway(client)
 
 class Container(containers.DeclarativeContainer):
     esl_gateway = providers.Resource(_init_esl_gateway, host=..., port=..., password=...)
 ```
 
 `providers.Resource` — ідіоматичний спосіб dependency-injector керувати
-залежностями з асинхронною ініціалізацією. В `main.py`:
+залежностями з асинхронною ініціалізацією; тут генератор тримає
+`async with Inbound(...)` відкритим до виклику `shutdown_resources()`,
+у якому genesis коректно закриє з'єднання через `__aexit__`. В `main.py`:
 
 ```python
-await container.init_resources()   # виконує await gateway.connect()
-gateway = await container.esl_gateway()  # уже підключений інстанс
+await container.init_resources()      # відкриває genesis.Inbound з'єднання
+listener = container.esl_event_listener()  # окреме genesis.Consumer з'єднання
 ...
-await container.shutdown_resources()  # graceful cleanup при завершенні
+await container.shutdown_resources()   # graceful cleanup при завершенні
 ```
 
 ## Запуск

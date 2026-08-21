@@ -1,7 +1,11 @@
-"""Async-адаптер над greenswitch.InboundESL — реалізує FreeSwitchGatewayPort.
+"""Async-адаптер над genesis.Inbound — реалізує FreeSwitchGatewayPort.
 
-greenswitch — asyncio-native клієнт для FreeSwitch ESL (на відміну від
-блокуючого python-ESL), встановлюється звичайним `pip install greenswitch`.
+genesis — asyncio-native клієнт для FreeSwitch ESL (на відміну від
+gevent-based greenswitch), встановлюється звичайним `pip install genesis`.
+Реальний API: `Inbound` використовується як async context manager
+(`async with Inbound(host, port, password) as client: await client.send(...)`).
+Тривале з'єднання на весь час роботи застосунку отримуємо, тримаючи
+`async with` відкритим у DI Resource-провайдері (див. containers.py).
 
 Примітка щодо job_uuid: замість того, щоб парсити відповідь FreeSwitch на
 sendmsg, ми самі генеруємо job_uuid і передаємо його в заголовку
@@ -15,40 +19,24 @@ from __future__ import annotations
 import logging
 import uuid as uuid_lib
 
-import greenswitch
+from genesis import Inbound
 
 from myapp.domain.commands import Command
 
 logger = logging.getLogger(__name__)
 
 
-class EslConnectionError(RuntimeError):
-    """Не вдалося встановити або підтримати Inbound ESL-з'єднання."""
-
-
 class EslGateway:
-    """Inbound ESL-з'єднання: система сама конектиться до FreeSwitch
-    (mod_event_socket) і надсилає команди через InboundESL.
+    """Тонка обгортка над уже підключеним genesis.Inbound-клієнтом.
+
+    Інстанс клієнта створюється й підключається в DI-контейнері
+    (providers.Resource, `async with Inbound(...) as client: yield ...`) —
+    EslGateway тут лише використовує вже готове з'єднання для відправки
+    команд, не керує його life-cycle самостійно.
     """
 
-    def __init__(self, host: str, port: int, password: str) -> None:
-        self._host: str = host
-        self._port: int = port
-        self._password: str = password
-        self._connection: greenswitch.InboundESL | None = None
-
-    async def connect(self) -> None:
-        self._connection = greenswitch.InboundESL(
-            host=self._host, port=self._port, password=self._password
-        )
-        await self._connection.connect()
-        logger.info("Connected to FreeSwitch ESL at %s:%s", self._host, self._port)
-
-    @property
-    def connection(self) -> greenswitch.InboundESL:
-        if self._connection is None:
-            raise EslConnectionError("ESL connection is not established, call connect() first")
-        return self._connection
+    def __init__(self, client: Inbound) -> None:
+        self._client: Inbound = client
 
     async def send_command(self, command: Command) -> str:
         """Надсилає sendmsg execute на канал. Повертає job_uuid, згенерований
@@ -61,5 +49,5 @@ class EslGateway:
             f"execute-app-arg: {command.args}\n"
             f"Event-UUID: {job_uuid}\n"
         )
-        await self.connection.send(message)
+        await self._client.send(message)
         return job_uuid

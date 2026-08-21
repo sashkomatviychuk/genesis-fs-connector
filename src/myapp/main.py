@@ -11,7 +11,6 @@ import logging
 import os
 
 from myapp.containers import Container
-from myapp.infrastructure.esl.esl_event_listener import EslEventListener
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,19 +29,17 @@ async def main() -> None:
     container: Container = create_container()
 
     # Ініціалізує всі providers.Resource у контейнері — тут це esl_gateway,
-    # чий async-ініціалізатор (_init_esl_gateway) виконує await gateway.connect().
+    # чий async-ініціалізатор (_init_esl_gateway) відкриває genesis.Inbound
+    # через `async with` і тримає з'єднання відкритим до shutdown_resources().
     await container.init_resources()  # type: ignore[misc]
 
     try:
-        gateway = await container.esl_gateway()
-        handle_event_use_case = container.handle_channel_event_use_case()
-        listener = EslEventListener(gateway=gateway, use_case=handle_event_use_case)
+        listener = container.esl_event_listener()
 
         # У реальному проєкті тут паралельно (asyncio.gather) піднімається
         # ActionQueueConsumer, підписаний на конкретний async-брокер
         # (aio-pika/aiokafka), який на кожне вхідне повідомлення викликає
         # await container.action_consumer().handle_message(payload).
-        logger.info("Starting ESL event listener...")
         await listener.run_forever()
     finally:
         await container.shutdown_resources()  # type: ignore[misc]

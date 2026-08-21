@@ -1,20 +1,24 @@
-"""Driving adapter: слухає Inbound ESL-подій через greenswitch і для кожної
+"""Driving adapter: слухає ESL-події через genesis.Consumer і для кожної
 релевантної події викликає HandleChannelEventUseCase.
 
-greenswitch реєструє обробники через register_handle(event_name, callback)
-і сам await-ить корутину-callback усередині свого внутрішнього event loop
-(handle_events()) — тому _on_raw_event тут async, без потреби вручну
-створювати asyncio.Task.
+genesis.Consumer керує власним ESL-з'єднанням (окремим від того, яке
+EslGateway використовує для відправки команд) і реєструє обробники подій
+декларативно через `@app.handle("EVENT_NAME")`. Ми реєструємо той самий
+callback для кожної цікавої нам події — сам callback лише мапить сирий
+event у domain-об'єкт і делегує його use case'у; конкретна доменна
+диспетчеризація за event.type відбувається вже всередині
+HandleChannelEventUseCase.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from genesis import Consumer
+
 from myapp.application.use_cases.handle_channel_event import HandleChannelEventUseCase
 from myapp.domain.events.base import ChannelEvent
 from myapp.infrastructure.esl.esl_event_mapper import map_esl_event
-from myapp.infrastructure.esl.esl_gateway import EslGateway
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +30,20 @@ _SUBSCRIBED_EVENTS: tuple[str, ...] = (
 
 
 class EslEventListener:
-    def __init__(self, gateway: EslGateway, use_case: HandleChannelEventUseCase) -> None:
-        self._gateway: EslGateway = gateway
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        password: str,
+        use_case: HandleChannelEventUseCase,
+    ) -> None:
         self._use_case: HandleChannelEventUseCase = use_case
+        self._app: Consumer = Consumer(host, port, password)
+        self._register_handlers()
 
     def _register_handlers(self) -> None:
-        connection = self._gateway.connection
         for event_name in _SUBSCRIBED_EVENTS:
-            connection.register_handle(event_name, self._on_raw_event)
+            self._app.handle(event_name)(self._on_raw_event)
 
     async def _on_raw_event(self, raw_event: Any) -> None:
         event: ChannelEvent | None = map_esl_event(raw_event)
@@ -45,10 +55,6 @@ class EslEventListener:
             logger.exception("Failed to handle ESL event: %s", event)
 
     async def run_forever(self) -> None:
-        """Підписується на потрібні події та блокується в циклі обробки.
-        У проді запускається як asyncio.Task, з reconnect-логікою при
-        розриві з'єднання (тут не показано для стислості)."""
-        self._register_handlers()
-        connection = self._gateway.connection
-        await connection.send("event plain " + " ".join(_SUBSCRIBED_EVENTS))
-        await connection.handle_events()
+        """Підключається і блокується в циклі обробки подій."""
+        logger.info("Starting ESL event listener (genesis.Consumer)...")
+        await self._app.start()

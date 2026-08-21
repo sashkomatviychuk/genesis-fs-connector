@@ -1,12 +1,14 @@
-"""Мапінг сирої greenswitch-події -> доменний ChannelEvent.
+"""Мапінг сирої genesis-події -> доменний ChannelEvent.
 
 Це єдине місце, що знає про конкретні заголовки протоколу ESL
 (Event-Name, Application-UUID, Unique-ID тощо) — domain-класи подій
 про них нічого не знають.
 
-_header() навмисно захищає код від відмінностей у точному API об'єкта
-події між версіями greenswitch (деякі версії надають метод get_header(),
-інші — dict-подібний атрибут headers).
+genesis представляє події та відповіді ESL як dict-подібні об'єкти
+(документація показує голий dict на кшталт {'Content-Type': ...,
+'Reply-Text': ...}), тому _header() спершу пробує `.get(name)`, а якщо
+конкретна версія бібліотеки віддає щось з окремим атрибутом `.headers` —
+підстраховується і цим шляхом.
 """
 from __future__ import annotations
 
@@ -19,9 +21,9 @@ from myapp.domain.events.channel_hangup_complete import ChannelHangupCompleteEve
 
 
 def _header(raw_event: Any, name: str) -> str:
-    get_header = getattr(raw_event, "get_header", None)
-    if callable(get_header):
-        value: str | None = get_header(name)
+    get = getattr(raw_event, "get", None)
+    if callable(get):
+        value: str | None = get(name)
         return value or ""
     headers: dict[str, str] = getattr(raw_event, "headers", {})
     return headers.get(name) or ""

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from dependency_injector import containers, providers
+from genesis import Inbound
 
 from myapp.application.action_handlers.base import ActionHandler
 from myapp.application.action_handlers.bridge_handler import BridgeActionHandler
@@ -27,6 +28,7 @@ from myapp.application.use_cases.execute_action import ExecuteActionUseCase
 from myapp.application.use_cases.handle_channel_event import HandleChannelEventUseCase
 from myapp.domain.actions.base import ActionType
 from myapp.domain.events.base import EventType
+from myapp.infrastructure.esl.esl_event_listener import EslEventListener
 from myapp.infrastructure.esl.esl_gateway import EslGateway
 from myapp.infrastructure.queue.result_publisher import StubResultPublisher
 from myapp.infrastructure.repositories.in_memory_execution_repository import (
@@ -36,12 +38,16 @@ from myapp.presentation.action_consumer import ActionQueueConsumer
 
 
 async def _init_esl_gateway(host: str, port: int, password: str) -> AsyncIterator[EslGateway]:
-    """Async-ініціалізатор для providers.Resource: створює EslGateway,
-    підключається один раз і віддає готовий інстанс. Код після yield
-    (тут відсутній) виконується при container.shutdown_resources()."""
-    gateway = EslGateway(host=host, port=port, password=password)
-    await gateway.connect()
-    yield gateway
+    """Async-ініціалізатор для providers.Resource.
+
+    genesis.Inbound — асинхронний контекст-менеджер; тримаємо `async with`
+    відкритим для всього часу життя застосунку через генератор з yield
+    всередині блоку. Код після yield виконується при
+    container.shutdown_resources() — саме там genesis коректно закриє
+    з'єднання через __aexit__.
+    """
+    async with Inbound(host, port, password) as client:
+        yield EslGateway(client)
 
 
 class Container(containers.DeclarativeContainer):
@@ -106,6 +112,15 @@ class Container(containers.DeclarativeContainer):
     handle_channel_event_use_case = providers.Factory(
         HandleChannelEventUseCase,
         event_handlers=event_handlers,
+    )
+
+    # ---- ESL event listener (окреме genesis.Consumer з'єднання) -------------
+    esl_event_listener = providers.Factory(
+        EslEventListener,
+        host=config.esl.host,
+        port=config.esl.port,
+        password=config.esl.password,
+        use_case=handle_channel_event_use_case,
     )
 
     # ---- presentation -------------------------------------------------------

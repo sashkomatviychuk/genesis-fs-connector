@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Async Hexagonal-архітектура для керування FreeSwitch через ESL Inbound (greenswitch), DI через dependency-injector"
 requires-python = ">=3.11"
 dependencies = [
-    "greenswitch>=0.7",
+    "genesis>=0.5",
     "dependency-injector>=4.42",
     "PyYAML>=6.0",
 ]
