@@ -1,0 +1,8 @@
+esl:
+  host: "freeswitch-internal.prod.local"
+  port: 8021
+  # У продакшн-оточенні пароль зазвичай не тримають у файлі під контролем
+  # версій — цей рядок або підміняється деплой-пайплайном (envsubst/Helm),
+  # або замінюється на container.config.esl.password.from_env("ESL_PASSWORD")
+  # у main.py поверх значення з yaml.
+  password: "REPLACE_ME"

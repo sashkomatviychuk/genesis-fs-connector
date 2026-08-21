@@ -1,0 +1,17 @@
+[project]
+name = "esl-controller"
+version = "0.2.0"
+description = "Async Hexagonal-архітектура для керування FreeSwitch через ESL Inbound (greenswitch), DI через dependency-injector"
+requires-python = ">=3.11"
+dependencies = [
+    "greenswitch>=0.7",
+    "dependency-injector>=4.42",
+    "PyYAML>=6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

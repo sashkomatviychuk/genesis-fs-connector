@@ -1,0 +1,115 @@
+"""Composition root, побудований через dependency-injector.
+
+esl_gateway зібраний як providers.Resource — асинхронний provider, що
+викликає await gateway.connect() один раз при container.init_resources()
+і повертає вже підключений інстанс. Це ідіоматичний спосіб dependency-injector
+керувати ресурсами з асинхронною ініціалізацією/завершенням роботи.
+"""
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+
+from dependency_injector import containers, providers
+
+from myapp.application.action_handlers.base import ActionHandler
+from myapp.application.action_handlers.bridge_handler import BridgeActionHandler
+from myapp.application.action_handlers.hangup_handler import HangupActionHandler
+from myapp.application.action_handlers.playback_handler import PlaybackActionHandler
+from myapp.application.event_handlers.base import EventHandler
+from myapp.application.event_handlers.channel_create_handler import ChannelCreateHandler
+from myapp.application.event_handlers.channel_execute_complete_handler import (
+    ChannelExecuteCompleteHandler,
+)
+from myapp.application.event_handlers.channel_hangup_complete_handler import (
+    ChannelHangupCompleteHandler,
+)
+from myapp.application.use_cases.execute_action import ExecuteActionUseCase
+from myapp.application.use_cases.handle_channel_event import HandleChannelEventUseCase
+from myapp.domain.actions.base import ActionType
+from myapp.domain.events.base import EventType
+from myapp.infrastructure.esl.esl_gateway import EslGateway
+from myapp.infrastructure.queue.result_publisher import StubResultPublisher
+from myapp.infrastructure.repositories.in_memory_execution_repository import (
+    InMemoryCommandExecutionRepository,
+)
+from myapp.presentation.action_consumer import ActionQueueConsumer
+
+
+async def _init_esl_gateway(host: str, port: int, password: str) -> AsyncIterator[EslGateway]:
+    """Async-ініціалізатор для providers.Resource: створює EslGateway,
+    підключається один раз і віддає готовий інстанс. Код після yield
+    (тут відсутній) виконується при container.shutdown_resources()."""
+    gateway = EslGateway(host=host, port=port, password=password)
+    await gateway.connect()
+    yield gateway
+
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+
+    # ---- infrastructure -------------------------------------------------
+    execution_repository = providers.Singleton(InMemoryCommandExecutionRepository)
+
+    result_publisher = providers.Singleton(StubResultPublisher)
+
+    esl_gateway = providers.Resource(
+        _init_esl_gateway,
+        host=config.esl.host,
+        port=config.esl.port,
+        password=config.esl.password,
+    )
+
+    # ---- action handlers registry ---------------------------------------
+    playback_action_handler = providers.Singleton(PlaybackActionHandler)
+    bridge_action_handler = providers.Singleton(BridgeActionHandler)
+    hangup_action_handler = providers.Singleton(HangupActionHandler)
+
+    action_handlers: providers.Dict[ActionType, ActionHandler] = providers.Dict(
+        {
+            ActionType.PLAYBACK: playback_action_handler,
+            ActionType.BRIDGE: bridge_action_handler,
+            ActionType.HANGUP: hangup_action_handler,
+        }
+    )
+
+    # ---- event handlers registry ------------------------------------------
+    channel_create_handler = providers.Singleton(ChannelCreateHandler)
+
+    channel_execute_complete_handler = providers.Singleton(
+        ChannelExecuteCompleteHandler,
+        repository=execution_repository,
+        publisher=result_publisher,
+    )
+
+    channel_hangup_complete_handler = providers.Singleton(
+        ChannelHangupCompleteHandler,
+        repository=execution_repository,
+        publisher=result_publisher,
+    )
+
+    event_handlers: providers.Dict[EventType, EventHandler] = providers.Dict(
+        {
+            EventType.CHANNEL_CREATE: channel_create_handler,
+            EventType.CHANNEL_EXECUTE_COMPLETE: channel_execute_complete_handler,
+            EventType.CHANNEL_HANGUP_COMPLETE: channel_hangup_complete_handler,
+        }
+    )
+
+    # ---- use cases ----------------------------------------------------------
+    execute_action_use_case = providers.Factory(
+        ExecuteActionUseCase,
+        repository=execution_repository,
+        gateway=esl_gateway,
+        action_handlers=action_handlers,
+    )
+
+    handle_channel_event_use_case = providers.Factory(
+        HandleChannelEventUseCase,
+        event_handlers=event_handlers,
+    )
+
+    # ---- presentation -------------------------------------------------------
+    action_consumer = providers.Factory(
+        ActionQueueConsumer,
+        use_case=execute_action_use_case,
+    )
